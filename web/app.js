@@ -257,7 +257,8 @@
   function undo(silent) { const s = undoStack.pop(); if (!s) return; restore(s, redoStack); if (silent) redoStack.pop(); syncButtons(); }
   function redo() { const s = redoStack.pop(); if (!s) return; restore(s, undoStack); syncButtons(); }
   $("btnUndo").onclick = () => undo(); $("btnRedo").onclick = redo;
-  $("btnClear").onclick = () => { pushUndo(false); mctx.clearRect(0, 0, W, H); syncButtons(); };
+  function maskIsEmpty() { const d = mctx.getImageData(0, 0, W, H).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return false; return true; }
+  $("btnClear").onclick = () => { if (!W || maskIsEmpty()) return; pushUndo(false); mctx.clearRect(0, 0, W, H); syncButtons(); }; // no undo step for an already empty mask
   function syncButtons() {
     $("btnUndo").disabled = !undoStack.length; $("btnRedo").disabled = !redoStack.length;
     $("btnRevert").disabled = !hasResult; // hasResult is false exactly when the image is the one opened
