@@ -320,7 +320,7 @@
     if (!res.ok) throw new Error(`model download failed (HTTP ${res.status})`);
     const total = +res.headers.get("content-length") || 208e6, reader = res.body.getReader(), chunks = [];
     let got = 0;
-    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got / total, got); }
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got / total, got, total); }
     const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
     if (cache) { try { await cache.put(MODEL_URL, new Response(buf, { headers: { "content-type": "application/octet-stream" } })); } catch { /* quota: fine */ } }
     return buf;
@@ -349,7 +349,7 @@
       const bar = $("aiBar"), fill = bar.firstElementChild; bar.hidden = false; $("btnLoadAI").disabled = true;
       try {
         aiState("busy", fromFile ? "Reading model file" : "Downloading model");
-        const bytes = fromFile ? new Uint8Array(await fromFile.arrayBuffer()) : await fetchModel((p, got) => { fill.style.width = Math.round(p * 100) + "%"; aiState("busy", `Downloading ${(got / 1e6).toFixed(0)} / 208 MB`); });
+        const bytes = fromFile ? new Uint8Array(await fromFile.arrayBuffer()) : await fetchModel((p, got, total) => { fill.style.width = Math.round(Math.min(1, p) * 100) + "%"; aiState("busy", `Downloading ${(got / 1e6).toFixed(0)} / ${(Math.max(total, got) / 1e6).toFixed(0)} MB`); });
         fill.style.width = "100%"; aiState("busy", "Starting AI engine");
         const { session, ep } = await createSession(bytes);
         lama = session;
