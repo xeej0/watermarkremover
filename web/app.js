@@ -474,7 +474,11 @@
   function blobOf(canvas, type, q) { return new Promise((r) => canvas.toBlob(r, type, q)); }
   function save(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000); }
   $("btnDownload").onclick = async () => save(await blobOf(imgC, "image/png"), `${fileName}_unmarked.png`);
-  $("btnDownloadJpg").onclick = async () => save(await blobOf(imgC, "image/jpeg", 0.95), `${fileName}_unmarked.jpg`);
+  $("btnDownloadJpg").onclick = async () => {
+    // JPEG has no transparency: put see-through areas on white instead of the black toBlob would give
+    const c = document.createElement("canvas"); c.width = W; c.height = H; const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.drawImage(imgC, 0, 0);
+    const blob = await blobOf(c, "image/jpeg", 0.95); c.width = c.height = 0; save(blob, `${fileName}_unmarked.jpg`);
+  };
   $("btnShowResult").onclick = async () => { $("saveImg").src = URL.createObjectURL(await blobOf(imgC, "image/png")); $("saveDialog").showModal(); };
   $("saveClose").onclick = () => $("saveDialog").close();
   $("saveDialog").addEventListener("close", () => { URL.revokeObjectURL($("saveImg").src); $("saveImg").removeAttribute("src"); });
