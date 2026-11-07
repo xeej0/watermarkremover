@@ -310,7 +310,7 @@
   $("btnDetect").onclick = () => detect(null);
 
   // ------------------------------------------------------------ AI model (LaMa)
-  let lama = null, lamaLoading = null;
+  let lama = null, lamaLoading = null, aiFallback = ""; // aiFallback: why the last removal could not use AI
   function aiState(state, text) { const c = $("aiChip"); c.dataset.state = state; c.textContent = text; }
   async function fetchModel(onProgress) {
     let cache = null;
@@ -414,7 +414,7 @@
   async function inpaint(data, mask, w = W, h = H) {
     if (wantAI()) {
       try { await loadLama(); return await inpaintAI(data, mask, w, h); }
-      catch (e) { if ($("engine").value === "ai") setStatus(`AI engine failed (${e.message}). Used PatchMatch instead.`, true); }
+      catch (e) { if ($("engine").value === "ai") setStatus(aiFallback = `AI engine failed (${e.message}). Used PatchMatch instead.`, true); }
     }
     const res = await rpc("inpaint", { data, w, h, mask }, [data.buffer], veilProgress);
     return res.data;
@@ -426,7 +426,7 @@
     const mask = readMask();
     if (!mask) { setStatus("Mark the watermark first: paint it, drag a box around it, or press Auto-detect.", true); return; }
     setBusy(true, wantAI() ? "Removing with AI" : "Removing with PatchMatch");
-    const t0 = performance.now();
+    const t0 = performance.now(); aiFallback = "";
     try {
       pushUndo(true);
       const before = ictx.getImageData(0, 0, W, H);
@@ -434,7 +434,7 @@
       const out = await inpaint(before.data.slice(), mask);
       ictx.putImageData(new ImageData(new Uint8ClampedArray(out.buffer || out), W, H), 0, 0);
       mctx.clearRect(0, 0, W, H); hasResult = true; syncButtons(); setCompare(true);
-      setStatus(`Removed in ${((performance.now() - t0) / 1000).toFixed(1)} s. Drag the line to compare. Leftovers? Pick Brush, paint them, and remove again.`);
+      setStatus(`${aiFallback ? aiFallback + " " : ""}Removed in ${((performance.now() - t0) / 1000).toFixed(1)} s. Drag the line to compare. Leftovers? Pick Brush, paint them, and remove again.`, !!aiFallback);
     } catch (err) { undo(true); setStatus("Removal failed: " + err.message, true); }
     setBusy(false);
   };
