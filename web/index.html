@@ -133,6 +133,7 @@ dialog img { max-width: 100%; max-height: 70vh; display: block; margin: 8px auto
   aside.side { border-right: 0; border-bottom: 1px solid var(--line); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   .stage { height: 62vh; order: -1; }
   .fab { display: block; left: calc(12px + env(safe-area-inset-left, 0px)); }
+  .split span { top: 60px; } /* keep the Before/After labels clear of the floating Remove button */
   .tagline { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
