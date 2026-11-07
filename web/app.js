@@ -513,8 +513,11 @@
   // ------------------------------------------------------------ batch
   let bFiles = [], bImages = [], bResults = [], bW = 0, bH = 0;
   $("btnBatchOpen").onclick = () => $("batchInput").click();
-  $("batchInput").onchange = async (e) => {
-    bFiles = [...e.target.files].filter((f) => f.type.startsWith("image/")); e.target.value = "";
+  $("batchInput").onchange = (e) => { const files = [...e.target.files]; e.target.value = ""; loadBatch(files); };
+  // files dropped on the Batch tab load like "Choose images"
+  $("viewBatch").addEventListener("drop", (e) => { e.preventDefault(); const files = [...e.dataTransfer.files]; if (files.some((f) => f.type.startsWith("image/"))) loadBatch(files); });
+  async function loadBatch(files) {
+    bFiles = files.filter((f) => f.type.startsWith("image/"));
     bResults = []; bImages = []; $("btnBatchZip").disabled = true; $("btnBatchRun").disabled = true; $("batchStatsBox").hidden = true;
     const st = $("batchStatus"); st.classList.remove("err");
     if (!bFiles.length) return;
@@ -535,7 +538,7 @@
     if (bad >= 0) { st.textContent = `${bFiles[bad].name} is ${sizes[bad][0]} × ${sizes[bad][1]}, but the first image is ${bW} × ${bH}. All images must be the same size.`; st.classList.add("err"); $("btnBatchRun").disabled = true; return; }
     if (bFiles.length < 3) { st.textContent = "Choose at least 3 images. The shared mark is found by comparing them."; st.classList.add("err"); $("btnBatchRun").disabled = true; return; }
     st.textContent = `${bFiles.length} images, ${bW} × ${bH}. Ready.`; $("btnBatchRun").disabled = false;
-  };
+  }
   $("btnBatchRun").onclick = async () => {
     const st = $("batchStatus"); st.classList.remove("err"); $("btnBatchRun").disabled = true;
     const t0 = performance.now();
