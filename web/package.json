@@ -1,0 +1,10 @@
+{
+  "name": "unmark-web",
+  "private": true,
+  "description": "Unmark Studio: in-browser watermark removal (static site, no build step)",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test tests/engine.test.cjs",
+    "deploy": "npx vercel deploy --prod"
+  }
+}

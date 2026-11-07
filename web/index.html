@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Unmark Studio</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Remove visible watermarks in your browser with AI inpainting. Images never leave your device.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: retouching bench. Tool column on the left, the print on a light table in the middle.
+   The mask is drawn in rubylith red, the masking film used in print prepress. */
+:root {
+  --paper: #eceef1; --panel: #ffffff; --ink: #15181c; --muted: #5b636d; --line: #d6dbe1;
+  --ruby: #cf3d2a; --ruby-ink: #ffffff; --ruby-soft: #f7ddd8; --ok: #2c7a4b; --warn: #a3620a;
+  --table-a: #e3e6ea; --table-b: #d9dde2;
+  --f-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 8px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #111316; --panel: #1a1d21; --ink: #e8ebee; --muted: #9aa3ad; --line: #2b3036;
+  --ruby: #ff6b52; --ruby-ink: #1b0b07; --ruby-soft: #3a1d18; --ok: #5cc28a; --warn: #e3a54a;
+  --table-a: #181b1f; --table-b: #1e2226; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --paper: #111316; --panel: #1a1d21; --ink: #e8ebee; --muted: #9aa3ad; --line: #2b3036;
+  --ruby: #ff6b52; --ruby-ink: #1b0b07; --ruby-soft: #3a1d18; --ok: #5cc28a; --warn: #e3a54a;
+  --table-a: #181b1f; --table-b: #1e2226; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--f-body); display: flex; flex-direction: column; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ruby); outline-offset: 2px; }
+
+header.top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+.brand { font: 800 21px/1 var(--f-display); letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
+.brand i { width: 14px; height: 14px; border-radius: 3px; background: var(--ruby); display: inline-block; transform: rotate(8deg); opacity: .85; }
+.tagline { color: var(--muted); font-size: 13px; }
+.tabs { margin-left: auto; display: flex; gap: 2px; background: var(--paper); padding: 3px; border-radius: 9px; }
+.tabs button { border: 0; background: none; padding: 5px 12px; border-radius: 7px; cursor: pointer; color: var(--muted); }
+.tabs button[aria-selected="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+.app { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px 1fr; }
+.app[hidden] { display: none !important; }
+aside.side { border-right: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding-block: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px; display: flex; flex-direction: column; gap: 18px; }
+.group { display: flex; flex-direction: column; gap: 8px; }
+.group h2 { margin: 0; font: 600 11px/1 var(--f-body); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.row { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: var(--panel); padding: 6px 11px; border-radius: var(--r); cursor: pointer; line-height: 1.3; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--ruby); color: var(--ruby-ink); border-color: var(--ruby); font-weight: 600; justify-content: center; padding: 10px; width: 100%; font-size: 15px; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.06); border-color: var(--ruby); }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.seg button { border: 0; border-right: 1px solid var(--line); background: var(--panel); padding: 7px 4px; cursor: pointer; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--ruby-soft); color: var(--ink); box-shadow: inset 0 -2px 0 var(--ruby); }
+.seg kbd { font: 10px var(--f-mono); color: var(--muted); }
+label.slider { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 13px; color: var(--muted); }
+label.slider output { font: 12px var(--f-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+label.slider input { grid-column: 1 / -1; width: 100%; accent-color: var(--ruby); }
+select { border: 1px solid var(--line); background: var(--panel); border-radius: var(--r); padding: 6px 8px; width: 100%; }
+.engine { border: 1px solid var(--line); border-radius: var(--r); padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 500 12px var(--f-mono); }
+.chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.chip[data-state="ready"]::before { background: var(--ok); }
+.chip[data-state="busy"]::before { background: var(--warn); animation: pulse 1s infinite alternate; }
+.chip[data-state="error"]::before { background: var(--ruby); }
+@keyframes pulse { to { opacity: .3; } }
+.bar { height: 4px; background: var(--paper); border-radius: 2px; overflow: hidden; }
+.bar > div { height: 100%; width: 0; background: var(--ruby); transition: width .2s; }
+.note { color: var(--muted); font-size: 12.5px; margin: 0; }
+.status { font-size: 13px; min-height: 2.6em; margin: 0; }
+.status.err { color: var(--ruby); }
+.linkish { background: none; border: 0; padding: 0; color: var(--ruby); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font-size: 12.5px; }
+
+/* the light table */
+.stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; touch-action: none;
+  background-color: var(--table-a);
+  background-image: linear-gradient(45deg, var(--table-b) 25%, transparent 25%, transparent 75%, var(--table-b) 75%),
+                    linear-gradient(45deg, var(--table-b) 25%, transparent 25%, transparent 75%, var(--table-b) 75%);
+  background-size: 22px 22px; background-position: 0 0, 11px 11px; }
+.board { position: absolute; left: 0; top: 0; transform-origin: 0 0; box-shadow: 0 6px 30px rgba(0,0,0,.18); }
+.board canvas { position: absolute; left: 0; top: 0; display: block; width: 100%; height: 100%; }
+#maskCanvas { opacity: .55; mix-blend-mode: normal; }
+.stage[data-tool="hand"], .stage.panning { cursor: grab; }
+.stage[data-tool="box"] { cursor: crosshair; }
+.cursor { position: absolute; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.55); border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); display: none; }
+.marquee { position: absolute; border: 1.5px dashed #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; display: none; }
+.split { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35); pointer-events: none; }
+.split span { position: absolute; top: 10px; font: 500 11px var(--f-mono); background: rgba(0,0,0,.6); color: #fff; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+.split .l { right: 6px; } .split .r { left: 6px; }
+.hud { position: absolute; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: 12px; display: flex; gap: 4px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
+.hud button { border: 0; background: none; padding: 4px 9px; cursor: pointer; border-radius: 6px; }
+.hud button:hover { background: var(--paper); }
+.hud output { font: 12px var(--f-mono); min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+.fab { display: none; position: absolute; left: 12px; top: 12px; border: 0; background: var(--ruby); color: var(--ruby-ink); font-weight: 600; padding: 9px 14px; border-radius: 999px; box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; }
+.dims { position: absolute; left: 12px; bottom: 12px; font: 12px var(--f-mono); color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+.drop-hint { position: absolute; inset: 12px; border: 2px dashed var(--ruby); border-radius: 12px; display: none; align-items: center; justify-content: center; font: 600 18px var(--f-display); color: var(--ruby); background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.stage.dragover .drop-hint { display: flex; }
+.busy-veil { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: color-mix(in srgb, var(--paper) 35%, transparent); }
+.busy-veil.on { display: flex; }
+.busy-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; min-width: 240px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 30px rgba(0,0,0,.15); }
+
+/* batch */
+.batch-main { overflow-y: auto; padding: 16px; min-width: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; display: flex; flex-direction: column; }
+.tile canvas { width: 100%; height: auto; display: block; background: var(--table-a); }
+.tile .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; font-size: 12.5px; }
+.tile .meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.empty { border: 2px dashed var(--line); border-radius: 12px; padding: 40px 20px; text-align: center; color: var(--muted); }
+.empty strong { display: block; color: var(--ink); font: 600 17px var(--f-display); margin-bottom: 4px; }
+.stats { font: 12px var(--f-mono); color: var(--muted); display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+.stats b { color: var(--ink); font-weight: 500; }
+
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); max-width: min(92vw, 900px); padding: 16px; }
+dialog::backdrop { background: rgba(0,0,0,.5); }
+dialog img { max-width: 100%; max-height: 70vh; display: block; margin: 8px auto; }
+
+@media (max-width: 820px) {
+  body { height: auto; min-height: 100%; }
+  .app { grid-template-columns: 1fr; grid-template-rows: auto; }
+  aside.side { border-right: 0; border-bottom: 1px solid var(--line); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .stage { height: 62vh; order: -1; }
+  .fab { display: block; left: calc(12px + env(safe-area-inset-left, 0px)); }
+  .tagline { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+</head>
+<body>
+<header class="top">
+  <div class="brand"><i aria-hidden="true"></i>Unmark</div>
+  <span class="tagline">Watermark removal that runs on your device</span>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tabSingle" aria-selected="true">Single image</button>
+    <button role="tab" id="tabBatch" aria-selected="false">Batch</button>
+  </nav>
+</header>
+
+<main class="app" id="viewSingle">
+  <aside class="side">
+    <section class="group">
+      <h2>Image</h2>
+      <div class="row">
+        <button class="btn" id="btnOpen">Open image…</button>
+        <button class="btn" id="btnSample">Sample</button>
+        <button class="btn" id="btnRevert" disabled title="Back to the image as opened">Revert</button>
+      </div>
+      <p class="note">Or drop a file on the table, or paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>.</p>
+    </section>
+
+    <section class="group">
+      <h2>Mark the watermark</h2>
+      <div class="seg" role="toolbar" aria-label="Tools">
+        <button data-tool="brush" aria-pressed="true">Brush<kbd>B</kbd></button>
+        <button data-tool="erase" aria-pressed="false">Erase<kbd>E</kbd></button>
+        <button data-tool="box" aria-pressed="false">Box<kbd>R</kbd></button>
+        <button data-tool="hand" aria-pressed="false">Pan<kbd>H</kbd></button>
+      </div>
+      <label class="slider">Brush size <output id="sizeOut">32 px</output><input type="range" id="size" min="4" max="200" value="32"></label>
+      <div class="row">
+        <button class="btn" id="btnDetect">Auto-detect</button>
+        <button class="btn" id="btnUndo" disabled title="Ctrl+Z">Undo</button>
+        <button class="btn" id="btnRedo" disabled title="Ctrl+Shift+Z">Redo</button>
+        <button class="btn" id="btnClear">Clear mask</button>
+      </div>
+      <label class="slider">Detection sensitivity <output id="sensOut">50</output><input type="range" id="sens" min="0" max="100" value="50"></label>
+      <label class="slider">Grow mask <output id="growOut">3 px</output><input type="range" id="grow" min="0" max="12" value="3"></label>
+      <p class="note">Box tool: drag around a mark and only its strokes are selected.</p>
+    </section>
+
+    <section class="group">
+      <h2>Fill engine</h2>
+      <select id="engine" aria-label="Fill engine">
+        <option value="auto">Auto (AI when loaded)</option>
+        <option value="ai">AI inpainting (LaMa)</option>
+        <option value="pm">PatchMatch (instant, no download)</option>
+      </select>
+      <div class="engine">
+        <span class="chip" id="aiChip" data-state="idle">AI model not loaded</span>
+        <div class="bar" id="aiBar" hidden><div></div></div>
+        <div class="row">
+          <button class="btn" id="btnLoadAI">Load AI model (208 MB)</button>
+          <button class="linkish" id="btnModelFile">use a local .onnx file</button>
+        </div>
+        <p class="note" id="aiNote">Downloads once, then stays cached in your browser. Uses your GPU when WebGPU is available.</p>
+      </div>
+    </section>
+
+    <section class="group">
+      <button class="btn primary" id="btnRemove">Remove watermark</button>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <div class="row">
+        <button class="btn" id="btnCompare" disabled title="Hold C">Compare</button>
+        <button class="btn" id="btnDownload" disabled>Download PNG</button>
+        <button class="btn" id="btnDownloadJpg" disabled>JPEG</button>
+      </div>
+      <button class="linkish" id="btnShowResult" hidden>Download blocked? Open the image to save it</button>
+    </section>
+
+    <p class="note">Images are processed in this browser tab and are never uploaded. Use Unmark on images you own or are licensed to edit.</p>
+  </aside>
+
+  <section class="stage" id="stage" data-tool="brush" aria-label="Image canvas">
+    <div class="board" id="board">
+      <canvas id="imageCanvas"></canvas>
+      <canvas id="beforeCanvas" hidden></canvas>
+      <canvas id="maskCanvas"></canvas>
+    </div>
+    <div class="split" id="split" hidden><span class="l">Before</span><span class="r">After</span></div>
+    <div class="cursor" id="cursor"></div>
+    <div class="marquee" id="marquee"></div>
+    <div class="dims" id="dims"></div>
+    <div class="hud">
+      <button id="zoomOut" aria-label="Zoom out">−</button>
+      <output id="zoomOut2">100%</output>
+      <button id="zoomIn" aria-label="Zoom in">+</button>
+      <button id="zoomFit">Fit</button>
+      <button id="zoom100">1:1</button>
+    </div>
+    <button class="fab" id="fabRemove">Remove watermark</button>
+    <div class="drop-hint">Drop to open</div>
+    <div class="busy-veil" id="veil"><div class="busy-card"><strong id="veilTitle">Working…</strong><div class="bar"><div id="veilBar"></div></div><span class="note" id="veilLabel"></span></div></div>
+  </section>
+</main>
+
+<main class="app" id="viewBatch" hidden>
+  <aside class="side">
+    <section class="group">
+      <h2>Shared watermark</h2>
+      <p class="note">For sets where the same mark sits in the same place on every image, such as previews from one source. Unmark estimates the mark's shape, colour and opacity from all images together, then subtracts it. The real pixels underneath come back, so nothing is invented.</p>
+      <button class="btn" id="btnBatchOpen">Choose images…</button>
+      <p class="note">Needs 3 or more images of identical size. More images give a cleaner result.</p>
+    </section>
+    <section class="group">
+      <button class="btn primary" id="btnBatchRun" disabled>Remove from all</button>
+      <p class="status" id="batchStatus" role="status" aria-live="polite"></p>
+      <button class="btn" id="btnBatchZip" disabled>Download all (.zip)</button>
+    </section>
+    <section class="group" id="batchStatsBox" hidden>
+      <h2>Estimate</h2>
+      <div class="stats" id="batchStats"></div>
+      <canvas id="batchMask" style="width:100%;border:1px solid var(--line);border-radius:6px;background:#000"></canvas>
+    </section>
+  </aside>
+  <section class="batch-main">
+    <div class="empty" id="batchEmpty"><strong>No images yet</strong>Choose a set of images that share one watermark.</div>
+    <div class="grid" id="batchGrid"></div>
+  </section>
+</main>
+
+<input type="file" id="fileInput" accept="image/*" hidden>
+<input type="file" id="batchInput" accept="image/*" multiple hidden>
+<input type="file" id="modelInput" accept=".onnx" hidden>
+<dialog id="saveDialog"><strong>Save your image</strong><p class="note">Right-click (or long-press on a phone) and choose Save image.</p><img id="saveImg" alt="Result"><div class="row" style="justify-content:flex-end"><button class="btn" id="saveClose">Close</button></div></dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js"></script>
+<script src="engine-worker.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

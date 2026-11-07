@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watermark Remover</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --ink: #1b1b1a; --muted: #6b6b66; --line: #e2e2dd;
+  --accent: #2b59c3; --accent-ink: #ffffff; --mask: rgba(230, 40, 70, 0.5); --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151515; --panel: #1f1f1e; --ink: #ececea; --muted: #9a9a94; --line: #33332f; --accent: #6d93ee; --accent-ink: #0d0d0d; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { font-size: 18px; margin: 0; }
+header .sub { color: var(--muted); font-size: 13px; }
+header nav { margin-left: auto; display: flex; gap: 4px; }
+.tab { background: none; border: 1px solid transparent; color: var(--muted); padding: 6px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
+.tab.on { border-color: var(--line); color: var(--ink); background: var(--panel); }
+main { display: grid; grid-template-columns: 260px 1fr; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+aside, .stage { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+aside { padding: 14px; display: flex; flex-direction: column; gap: 14px; align-self: start; }
+aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; }
+button.b { font: inherit; padding: 7px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+button.b:hover:not(:disabled) { border-color: var(--muted); }
+button.b.on { outline: 2px solid var(--accent); outline-offset: -1px; }
+button.b.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; width: 100%; padding: 10px; }
+button.b:disabled { opacity: .45; cursor: default; }
+label.s { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); gap: 2px; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.stage { position: relative; min-height: 60vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.drop { text-align: center; color: var(--muted); padding: 40px; border: 2px dashed var(--line); border-radius: var(--radius); margin: 24px; cursor: pointer; }
+.drop strong { color: var(--ink); display: block; font-size: 17px; margin-bottom: 4px; }
+.wrap { position: relative; max-width: 100%; max-height: 80vh; touch-action: none; }
+.wrap canvas { display: block; max-width: 100%; max-height: 80vh; }
+.wrap canvas + canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+#cmp { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; }
+#divider { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); pointer-events: none; }
+.status { font-size: 13px; color: var(--muted); min-height: 1.5em; }
+.hidden { display: none !important; }
+.note { font-size: 12px; color: var(--muted); }
+kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+ul.files { margin: 0; padding-left: 18px; font-size: 13px; max-height: 40vh; overflow: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Watermark Remover</h1>
+  <span class="sub">LaMa inpainting · multi-image matting · <span id="backend">…</span></span>
+  <nav><button class="tab on" data-tab="single">Single image</button><button class="tab" data-tab="batch">Batch</button></nav>
+</header>
+
+<main id="single">
+  <aside>
+    <div>
+      <h2>Image</h2>
+      <div class="row"><button class="b" id="open">Open…</button><button class="b" id="download" disabled>Download</button></div>
+    </div>
+    <div>
+      <h2>Mask</h2>
+      <div class="row">
+        <button class="b on" data-tool="brush" title="B">Brush</button>
+        <button class="b" data-tool="erase" title="E">Eraser</button>
+        <button class="b" data-tool="box" title="R">Box detect</button>
+      </div>
+      <label class="s" style="margin-top:8px">Brush size <input type="range" id="size" min="3" max="150" value="28"></label>
+      <div class="row" style="margin-top:6px">
+        <button class="b" id="auto" disabled>Auto-detect</button>
+        <button class="b" id="undo" disabled title="Ctrl+Z">Undo</button>
+        <button class="b" id="clear" disabled>Clear</button>
+      </div>
+      <label class="s" style="margin-top:8px">Detection sensitivity <input type="range" id="sens" min="0" max="1" step="0.05" value="0.5"></label>
+    </div>
+    <button class="b primary" id="run" disabled>Remove watermark</button>
+    <div class="status" id="status">Open an image to start.</div>
+    <p class="note">Paint over the mark, or drag a box around it to auto-select its strokes. After removing, keep painting to clean up leftovers and run again. <kbd>B</kbd> <kbd>E</kbd> <kbd>R</kbd> switch tools, <kbd>[</kbd> <kbd>]</kbd> resize.</p>
+    <p class="note">Use only on images you own or are licensed to edit.</p>
+  </aside>
+  <section class="stage" id="stage">
+    <div class="drop" id="drop"><strong>Drop an image here</strong>or click to choose a file</div>
+    <div class="wrap hidden" id="wrap">
+      <canvas id="img"></canvas><canvas id="ov"></canvas>
+      <div id="divider" class="hidden"></div>
+      <input type="range" id="cmp" class="hidden" min="0" max="1000" value="500" aria-label="Before / after">
+    </div>
+  </section>
+</main>
+
+<main id="batch" class="hidden">
+  <aside>
+    <h2>Batch: shared watermark</h2>
+    <p class="note">Choose 3 or more same-sized images carrying the same watermark in the same place (for example a set from one source). The mark is estimated from all of them together and the alpha blend is inverted, recovering the real pixels underneath rather than guessing them.</p>
+    <button class="b" id="bopen">Choose images…</button>
+    <ul class="files" id="blist"></ul>
+    <button class="b primary" id="brun" disabled>Process and download ZIP</button>
+    <div class="status" id="bstatus"></div>
+  </aside>
+  <section class="stage"><canvas id="bprev" style="max-width:100%;max-height:80vh"></canvas></section>
+</main>
+
+<input type="file" id="file" accept="image/*" class="hidden">
+<input type="file" id="bfile" accept="image/*" multiple class="hidden">
+
+<script>
+const $ = (id) => document.getElementById(id);
+const img = $("img"), ov = $("ov"), ictx = img.getContext("2d"), octx = ov.getContext("2d");
+const mask = document.createElement("canvas"), mctx = mask.getContext("2d");
+let original = null, result = null, current = null;
+let tool = "brush", drawing = false, last = null, boxStart = null, history = [];
+let fileName = "image";
+
+fetch("/api/info").then(r => r.json()).then(j => $("backend").textContent = j.backend === "lama" ? "LaMa (AI)" : "classical fallback").catch(() => {});
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
+  $("single").classList.toggle("hidden", t.dataset.tab !== "single");
+  $("batch").classList.toggle("hidden", t.dataset.tab !== "batch");
+});
+function status(msg) { $("status").textContent = msg; }
+
+// ---------- loading ----------
+$("open").onclick = $("drop").onclick = () => $("file").click();
+$("file").onchange = (e) => e.target.files[0] && load(e.target.files[0]);
+$("stage").addEventListener("dragover", (e) => e.preventDefault());
+$("stage").addEventListener("drop", (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; f && load(f); });
+window.addEventListener("paste", (e) => { const f = [...e.clipboardData.files].find(f => f.type.startsWith("image/")); f && load(f); });
+
+async function load(file) {
+  fileName = file.name.replace(/\.[^.]+$/, "") || "image";
+  const bmp = await createImageBitmap(file);
+  original = bmp; result = null;
+  setSource(bmp);
+  $("drop").classList.add("hidden"); $("wrap").classList.remove("hidden");
+  ["auto", "clear", "run"].forEach(id => $(id).disabled = false);
+  $("download").disabled = true; showCompare(false);
+  status(`${bmp.width} × ${bmp.height}. Paint the watermark or press Auto-detect.`);
+}
+function setSource(src) {
+  current = src;
+  for (const c of [img, ov, mask]) { c.width = src.width; c.height = src.height; }
+  ictx.drawImage(src, 0, 0); history = []; $("undo").disabled = true; redraw();
+}
+
+// ---------- mask drawing ----------
+function redraw() {
+  octx.clearRect(0, 0, ov.width, ov.height);
+  octx.globalCompositeOperation = "source-over";
+  octx.drawImage(mask, 0, 0);
+  octx.globalCompositeOperation = "source-in";
+  octx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--mask");
+  octx.fillRect(0, 0, ov.width, ov.height);
+  octx.globalCompositeOperation = "source-over";
+  if (boxStart && last) {
+    octx.setLineDash([8, 6]); octx.lineWidth = Math.max(2, ov.width / 500); octx.strokeStyle = "#fff";
+    octx.strokeRect(boxStart.x, boxStart.y, last.x - boxStart.x, last.y - boxStart.y); octx.setLineDash([]);
+  }
+}
+function pushHistory() { history.push(mctx.getImageData(0, 0, mask.width, mask.height)); if (history.length > 30) history.shift(); $("undo").disabled = false; }
+function pos(e) { const r = ov.getBoundingClientRect(); return { x: (e.clientX - r.left) * ov.width / r.width, y: (e.clientY - r.top) * ov.height / r.height }; }
+function brushPx() { const r = ov.getBoundingClientRect(); return +$("size").value * ov.width / r.width; }
+function stroke(a, b) {
+  mctx.globalCompositeOperation = tool === "erase" ? "destination-out" : "source-over";
+  mctx.strokeStyle = mctx.fillStyle = "#fff"; mctx.lineCap = mctx.lineJoin = "round"; mctx.lineWidth = brushPx();
+  mctx.beginPath(); mctx.moveTo(a.x, a.y); mctx.lineTo(b.x, b.y); mctx.stroke();
+  mctx.globalCompositeOperation = "source-over";
+}
+ov.addEventListener("pointerdown", (e) => {
+  if (!current || !$("cmp").classList.contains("hidden")) return;
+  ov.setPointerCapture(e.pointerId); drawing = true; last = pos(e);
+  if (tool === "box") { boxStart = last; return; }
+  pushHistory(); stroke(last, last); redraw();
+});
+ov.addEventListener("pointermove", (e) => {
+  if (!drawing) return; const p = pos(e);
+  if (tool !== "box") stroke(last, p);
+  last = p; redraw();
+});
+ov.addEventListener("pointerup", async () => {
+  if (!drawing) return; drawing = false;
+  if (tool === "box" && boxStart) {
+    const x = Math.min(boxStart.x, last.x), y = Math.min(boxStart.y, last.y), w = Math.abs(last.x - boxStart.x), h = Math.abs(last.y - boxStart.y);
+    boxStart = null; redraw();
+    if (w > 4 && h > 4) await detect([x, y, w, h].map(Math.round).join(","));
+  }
+});
+
+document.querySelectorAll("[data-tool]").forEach(b => b.onclick = () => setTool(b.dataset.tool));
+function setTool(t) { tool = t; document.querySelectorAll("[data-tool]").forEach(x => x.classList.toggle("on", x.dataset.tool === t)); }
+$("undo").onclick = () => { const s = history.pop(); if (s) { mctx.putImageData(s, 0, 0); redraw(); } $("undo").disabled = !history.length; };
+$("clear").onclick = () => { pushHistory(); mctx.clearRect(0, 0, mask.width, mask.height); redraw(); };
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); $("undo").click(); }
+  else if (e.key === "b") setTool("brush"); else if (e.key === "e") setTool("erase"); else if (e.key === "r") setTool("box");
+  else if (e.key === "[") $("size").value = +$("size").value - 4; else if (e.key === "]") $("size").value = +$("size").value + 4;
+});
+
+// ---------- server calls ----------
+function toBlob(canvas) { return new Promise(r => canvas.toBlob(r, "image/png")); }
+async function sourceBlob() { const c = document.createElement("canvas"); c.width = current.width; c.height = current.height; c.getContext("2d").drawImage(current, 0, 0); return toBlob(c); }
+function busy(on) { ["run", "auto", "open"].forEach(id => $(id).disabled = on); document.body.style.cursor = on ? "progress" : ""; }
+
+async function detect(box) {
+  busy(true); status(box ? "Selecting watermark strokes in box…" : "Detecting watermark…");
+  try {
+    const fd = new FormData(); fd.append("image", await sourceBlob(), "image.png"); fd.append("sensitivity", $("sens").value);
+    if (box) fd.append("box", box);
+    const r = await fetch("/api/detect", { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const j = await r.json(); const m = new Image(); m.src = j.mask; await m.decode();
+    const t = document.createElement("canvas"); t.width = mask.width; t.height = mask.height; const tc = t.getContext("2d");
+    tc.drawImage(m, 0, 0); const d = tc.getImageData(0, 0, t.width, t.height);
+    for (let i = 0; i < d.data.length; i += 4) { const v = d.data[i]; d.data[i] = d.data[i + 1] = d.data[i + 2] = 255; d.data[i + 3] = v; }
+    tc.putImageData(d, 0, 0); pushHistory(); mctx.drawImage(t, 0, 0); redraw();
+    status(j.found ? "Mask ready. Refine with brush or eraser, then remove." : "Nothing found. Try a box around the mark, higher sensitivity, or paint it.");
+  } catch (err) { status("Error: " + err.message); }
+  busy(false);
+}
+$("auto").onclick = () => detect(null);
+
+$("run").onclick = async () => {
+  const md = mctx.getImageData(0, 0, mask.width, mask.height).data;
+  let any = false; for (let i = 3; i < md.length; i += 4) if (md[i] > 0) { any = true; break; }
+  if (!any) { status("Mark the watermark first (paint, box, or auto-detect)."); return; }
+  busy(true); status("Removing… (first run may download the AI model)");
+  try {
+    const mc = document.createElement("canvas"); mc.width = mask.width; mc.height = mask.height; const mx = mc.getContext("2d");
+    mx.fillStyle = "#000"; mx.fillRect(0, 0, mc.width, mc.height); mx.drawImage(mask, 0, 0);
+    const fd = new FormData(); fd.append("image", await sourceBlob(), "image.png"); fd.append("mask", await toBlob(mc), "mask.png");
+    const t0 = performance.now();
+    const r = await fetch("/api/remove", { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const before = current; result = await createImageBitmap(await r.blob());
+    setSource(result); mctx.clearRect(0, 0, mask.width, mask.height); redraw();
+    beforeImg = before; showCompare(true); $("download").disabled = false;
+    status(`Done in ${((performance.now() - t0) / 1000).toFixed(1)} s. Drag to compare. Pick a mask tool to fix leftovers and run again.`);
+  } catch (err) { status("Error: " + err.message); }
+  busy(false);
+};
+
+// ---------- compare slider ----------
+let beforeImg = null;
+function showCompare(on) {
+  $("cmp").classList.toggle("hidden", !on); $("divider").classList.toggle("hidden", !on);
+  if (on) drawCompare(); else if (current) ictx.drawImage(current, 0, 0);
+}
+function drawCompare() {
+  const f = +$("cmp").value / 1000, x = Math.round(img.width * f);
+  ictx.drawImage(current, 0, 0);
+  ictx.drawImage(beforeImg, 0, 0, x, img.height, 0, 0, x, img.height);
+  $("divider").style.left = (f * 100) + "%";
+}
+$("cmp").oninput = drawCompare;
+$("cmp").addEventListener("dblclick", () => showCompare(false));
+["brush", "erase", "box"].forEach(t => document.querySelector(`[data-tool=${t}]`).addEventListener("click", () => showCompare(false)));
+$("download").onclick = async () => {
+  const c = document.createElement("canvas"); c.width = current.width; c.height = current.height; c.getContext("2d").drawImage(current, 0, 0);
+  const a = document.createElement("a"); a.href = URL.createObjectURL(await toBlob(c)); a.download = fileName + "_clean.png"; a.click();
+};
+
+// ---------- batch ----------
+let bfiles = [];
+$("bopen").onclick = () => $("bfile").click();
+$("bfile").onchange = async (e) => {
+  bfiles = [...e.target.files];
+  $("blist").innerHTML = bfiles.map(f => `<li>${f.name.replace(/[<&>]/g, "")}</li>`).join("");
+  $("brun").disabled = bfiles.length < 3;
+  $("bstatus").textContent = bfiles.length < 3 ? "Choose at least 3 images." : `${bfiles.length} images ready.`;
+  if (bfiles[0]) { const b = await createImageBitmap(bfiles[0]), c = $("bprev"); c.width = b.width; c.height = b.height; c.getContext("2d").drawImage(b, 0, 0); }
+};
+$("brun").onclick = async () => {
+  $("brun").disabled = true; $("bstatus").textContent = "Estimating shared watermark and inverting blend…";
+  try {
+    const fd = new FormData(); bfiles.forEach(f => fd.append("images", f, f.name));
+    const r = await fetch("/api/batch", { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob()); a.download = "wmremover_batch.zip"; a.click();
+    $("bstatus").textContent = "Done. ZIP downloaded (includes the estimated watermark mask).";
+  } catch (err) { $("bstatus").textContent = "Error: " + err.message; }
+  $("brun").disabled = false;
+};
+</script>
+</body>
+</html>
