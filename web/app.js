@@ -329,11 +329,15 @@
     const ort = window.ort;
     ort.env.wasm.wasmPaths = ORT_WASM;
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
+    // run ORT in its own worker so session start-up and inference never freeze the page
+    ort.env.wasm.proxy = typeof Worker !== "undefined";
     const tries = navigator.gpu ? [["webgpu"], ["wasm"]] : [["wasm"]];
     let last;
     for (const eps of tries) {
       try {
-        const s = await ort.InferenceSession.create(bytes, { executionProviders: eps, graphOptimizationLevel: "all" });
+        // the proxy transfers (detaches) the model buffer, so keep a copy while another try may follow
+        const model = eps === tries[tries.length - 1] ? bytes : bytes.slice();
+        const s = await ort.InferenceSession.create(model, { executionProviders: eps, graphOptimizationLevel: "all" });
         // smoke test so a GPU that cannot run an op falls back now, not mid-edit
         await runLama(s, new Float32Array(3 * LAMA_SIZE * LAMA_SIZE), new Float32Array(LAMA_SIZE * LAMA_SIZE));
         return { session: s, ep: eps[0] };
