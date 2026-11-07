@@ -260,7 +260,7 @@
   $("btnClear").onclick = () => { pushUndo(false); mctx.clearRect(0, 0, W, H); syncButtons(); };
   function syncButtons() {
     $("btnUndo").disabled = !undoStack.length; $("btnRedo").disabled = !redoStack.length;
-    $("btnRevert").disabled = !hasResult && !undoStack.some((s) => s.image);
+    $("btnRevert").disabled = !hasResult; // hasResult is false exactly when the image is the one opened
     for (const id of ["btnCompare", "btnDownload", "btnDownloadJpg"]) $(id).disabled = !hasResult;
     $("btnShowResult").hidden = !hasResult;
   }
