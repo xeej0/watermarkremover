@@ -92,7 +92,7 @@
   // a file dropped anywhere else would make the browser open it and leave the page
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => e.preventDefault());
-  window.addEventListener("paste", (e) => { const f = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith("image/")); if (f) openFile(f); });
+  window.addEventListener("paste", (e) => { const f = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith("image/")); if (f) { if (!$("viewBatch").hidden) showTab(false); openFile(f); } }); // a paste on the Batch tab opens in the single editor, so show it
 
   // Procedural sample: a landscape with fine texture and a stock-style preview mark.
   function makeSample() {
