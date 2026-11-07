@@ -439,7 +439,8 @@
     setBusy(false);
   };
 
-  $("fabRemove").onclick = () => $("btnRemove").click();
+  // on phones the status line sits below the canvas: bring an error (e.g. no mask yet) into view
+  $("fabRemove").onclick = () => { setStatus(""); $("btnRemove").click(); if ($("status").classList.contains("err")) $("status").scrollIntoView({ block: "center", behavior: "smooth" }); };
   $("fabRemove").addEventListener("pointerdown", (e) => e.stopPropagation());
 
   // ------------------------------------------------------------ compare
