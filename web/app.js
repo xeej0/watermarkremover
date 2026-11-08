@@ -9,6 +9,7 @@
   const MODEL_CACHE = "unmark-models-v1";
   const LAMA_SIZE = 512;
   const RUBY = "rgb(207,61,42)";
+  const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const store = {
     get(k) { try { return localStorage.getItem("unmark." + k); } catch { return null; } },
     set(k, v) { try { localStorage.setItem("unmark." + k, v); } catch { /* storage unavailable */ } },
@@ -45,7 +46,7 @@
   const mctx = maskC.getContext("2d", { willReadFrequently: true });
   let W = 0, H = 0, original = null, fileName = "image";
   let tool = "brush", view = { s: 1, x: 0, y: 0 };
-  let undoStack = [], redoStack = [], hasResult = false, busy = false;
+  let undoStack = [], redoStack = [], hasResult = false, busy = false, loadGen = 0;
 
   function setStatus(msg, err = false) { const s = $("status"); s.textContent = msg; s.classList.toggle("err", err); }
   function setBusy(on, title = "Working…") {
@@ -58,7 +59,7 @@
 
   // ------------------------------------------------------------ loading
   function loadSource(src, name) {
-    W = src.width; H = src.height; fileName = name;
+    W = src.width; H = src.height; fileName = name; loadGen++;
     for (const c of [imgC, maskC, beforeC]) { c.width = W; c.height = H; }
     ictx.drawImage(src, 0, 0);
     original = ictx.getImageData(0, 0, W, H);
@@ -69,12 +70,15 @@
     setCompare(false); syncButtons(); fit();
   }
   async function openFile(file) {
+    if (busy) { setStatus("Wait for the current step to finish, then open the image again.", true); return; }
     if (!file || !file.type.startsWith("image/")) { setStatus("That file is not an image. Try a JPEG, PNG or WebP.", true); return; }
     try {
       const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-      const MAX = 40e6;
-      if (bmp.width * bmp.height > MAX) { setStatus(`This image is ${(bmp.width * bmp.height / 1e6).toFixed(0)} megapixels. Unmark handles up to 40.`, true); return; }
+      // iPhone and iPad Safari cannot draw canvases larger than 16.7 megapixels.
+      const MAX = IOS ? 16e6 : 40e6;
+      if (bmp.width * bmp.height > MAX) { setStatus(`This image is ${(bmp.width * bmp.height / 1e6).toFixed(0)} megapixels. Unmark handles up to ${MAX / 1e6} on this device.`, true); bmp.close(); return; }
       loadSource(bmp, file.name.replace(/\.[^.]+$/, "") || "image");
+      bmp.close();
       setStatus("Paint over the watermark, drag a box around it, or press Auto-detect.");
     } catch { setStatus("This image could not be decoded by your browser.", true); }
   }
@@ -85,7 +89,10 @@
   stage.addEventListener("dragover", (e) => { e.preventDefault(); stage.classList.add("dragover"); });
   stage.addEventListener("dragleave", () => stage.classList.remove("dragover"));
   stage.addEventListener("drop", (e) => { e.preventDefault(); stage.classList.remove("dragover"); openFile(e.dataTransfer.files[0]); });
-  window.addEventListener("paste", (e) => { const f = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith("image/")); if (f) openFile(f); });
+  // a file dropped anywhere else would make the browser open it and leave the page
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => e.preventDefault());
+  window.addEventListener("paste", (e) => { const f = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith("image/")); if (f) { if (!$("viewBatch").hidden) showTab(false); openFile(f); } }); // a paste on the Batch tab opens in the single editor, so show it
 
   // Procedural sample: a landscape with fine texture and a stock-style preview mark.
   function makeSample() {
@@ -123,9 +130,10 @@
   async function loadSample(announce) {
     try { await document.fonts.ready; } catch { /* fonts optional */ }
     loadSource(makeSample(), "sample");
+    const gen = loadGen;
     if (announce !== false) setStatus("Sample loaded. Detecting the watermark…");
     await detect(null, true);
-    setStatus("Sample loaded with the watermark detected (red). Press Remove watermark to see it go.");
+    if (gen === loadGen) setStatus("Sample loaded with the watermark detected (red). Press Remove watermark to see it go.");
   }
 
   // ------------------------------------------------------------ view: zoom & pan
@@ -249,10 +257,11 @@
   function undo(silent) { const s = undoStack.pop(); if (!s) return; restore(s, redoStack); if (silent) redoStack.pop(); syncButtons(); }
   function redo() { const s = redoStack.pop(); if (!s) return; restore(s, undoStack); syncButtons(); }
   $("btnUndo").onclick = () => undo(); $("btnRedo").onclick = redo;
-  $("btnClear").onclick = () => { pushUndo(false); mctx.clearRect(0, 0, W, H); syncButtons(); };
+  function maskIsEmpty() { const d = mctx.getImageData(0, 0, W, H).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return false; return true; }
+  $("btnClear").onclick = () => { if (!W || maskIsEmpty()) return; pushUndo(false); mctx.clearRect(0, 0, W, H); syncButtons(); }; // no undo step for an already empty mask
   function syncButtons() {
     $("btnUndo").disabled = !undoStack.length; $("btnRedo").disabled = !redoStack.length;
-    $("btnRevert").disabled = !hasResult && !undoStack.some((s) => s.image);
+    $("btnRevert").disabled = !hasResult; // hasResult is false exactly when the image is the one opened
     for (const id of ["btnCompare", "btnDownload", "btnDownloadJpg"]) $(id).disabled = !hasResult;
     $("btnShowResult").hidden = !hasResult;
   }
@@ -290,7 +299,9 @@
       if (sc < 1) { const t = document.createElement("canvas"); t.width = ww; t.height = wh; const tc = t.getContext("2d"); tc.imageSmoothingQuality = "high"; tc.drawImage(imgC, 0, 0, ww, wh); data = tc.getImageData(0, 0, ww, wh).data; }
       else data = ictx.getImageData(0, 0, W, H).data;
       const grow = Math.max(0, Math.round(+$("grow").value * sc));
+      const gen = loadGen;
       const res = await rpc("detect", { data, w: ww, h: wh, box: box && box.map((v) => v * sc), sensitivity: +$("sens").value / 100, grow }, [data.buffer], veilProgress);
+      if (gen !== loadGen) return; // another image was opened meanwhile: this mask belongs to the old one
       if (res.found) { pushUndo(false); addMask(res.mask, ww, wh); }
       if (!quiet) setStatus(res.found ? "Watermark marked in red. Touch up with Brush or Erase, then press Remove watermark." : "No watermark found. Drag a box around it, raise the sensitivity, or paint it with the brush.", !res.found);
       syncButtons();
@@ -300,7 +311,7 @@
   $("btnDetect").onclick = () => detect(null);
 
   // ------------------------------------------------------------ AI model (LaMa)
-  let lama = null, lamaLoading = null;
+  let lama = null, lamaLoading = null, aiFallback = ""; // aiFallback: why the last removal could not use AI
   function aiState(state, text) { const c = $("aiChip"); c.dataset.state = state; c.textContent = text; }
   async function fetchModel(onProgress) {
     let cache = null;
@@ -309,7 +320,7 @@
     if (!res.ok) throw new Error(`model download failed (HTTP ${res.status})`);
     const total = +res.headers.get("content-length") || 208e6, reader = res.body.getReader(), chunks = [];
     let got = 0;
-    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got / total, got); }
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got / total, got, total); }
     const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
     if (cache) { try { await cache.put(MODEL_URL, new Response(buf, { headers: { "content-type": "application/octet-stream" } })); } catch { /* quota: fine */ } }
     return buf;
@@ -318,11 +329,15 @@
     const ort = window.ort;
     ort.env.wasm.wasmPaths = ORT_WASM;
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
+    // run ORT in its own worker so session start-up and inference never freeze the page
+    ort.env.wasm.proxy = typeof Worker !== "undefined";
     const tries = navigator.gpu ? [["webgpu"], ["wasm"]] : [["wasm"]];
     let last;
     for (const eps of tries) {
       try {
-        const s = await ort.InferenceSession.create(bytes, { executionProviders: eps, graphOptimizationLevel: "all" });
+        // the proxy transfers (detaches) the model buffer, so keep a copy while another try may follow
+        const model = eps === tries[tries.length - 1] ? bytes : bytes.slice();
+        const s = await ort.InferenceSession.create(model, { executionProviders: eps, graphOptimizationLevel: "all" });
         // smoke test so a GPU that cannot run an op falls back now, not mid-edit
         await runLama(s, new Float32Array(3 * LAMA_SIZE * LAMA_SIZE), new Float32Array(LAMA_SIZE * LAMA_SIZE));
         return { session: s, ep: eps[0] };
@@ -338,7 +353,7 @@
       const bar = $("aiBar"), fill = bar.firstElementChild; bar.hidden = false; $("btnLoadAI").disabled = true;
       try {
         aiState("busy", fromFile ? "Reading model file" : "Downloading model");
-        const bytes = fromFile ? new Uint8Array(await fromFile.arrayBuffer()) : await fetchModel((p, got) => { fill.style.width = Math.round(p * 100) + "%"; aiState("busy", `Downloading ${(got / 1e6).toFixed(0)} / 208 MB`); });
+        const bytes = fromFile ? new Uint8Array(await fromFile.arrayBuffer()) : await fetchModel((p, got, total) => { fill.style.width = Math.round(Math.min(1, p) * 100) + "%"; aiState("busy", `Downloading ${(got / 1e6).toFixed(0)} / ${(Math.max(total, got) / 1e6).toFixed(0)} MB`); });
         fill.style.width = "100%"; aiState("busy", "Starting AI engine");
         const { session, ep } = await createSession(bytes);
         lama = session;
@@ -404,7 +419,7 @@
   async function inpaint(data, mask, w = W, h = H) {
     if (wantAI()) {
       try { await loadLama(); return await inpaintAI(data, mask, w, h); }
-      catch (e) { if ($("engine").value === "ai") setStatus(`AI engine failed (${e.message}). Used PatchMatch instead.`, true); }
+      catch (e) { if ($("engine").value === "ai") setStatus(aiFallback = `AI engine failed (${e.message}). Used PatchMatch instead.`, true); }
     }
     const res = await rpc("inpaint", { data, w, h, mask }, [data.buffer], veilProgress);
     return res.data;
@@ -416,7 +431,7 @@
     const mask = readMask();
     if (!mask) { setStatus("Mark the watermark first: paint it, drag a box around it, or press Auto-detect.", true); return; }
     setBusy(true, wantAI() ? "Removing with AI" : "Removing with PatchMatch");
-    const t0 = performance.now();
+    const t0 = performance.now(); aiFallback = "";
     try {
       pushUndo(true);
       const before = ictx.getImageData(0, 0, W, H);
@@ -424,12 +439,13 @@
       const out = await inpaint(before.data.slice(), mask);
       ictx.putImageData(new ImageData(new Uint8ClampedArray(out.buffer || out), W, H), 0, 0);
       mctx.clearRect(0, 0, W, H); hasResult = true; syncButtons(); setCompare(true);
-      setStatus(`Removed in ${((performance.now() - t0) / 1000).toFixed(1)} s. Drag the line to compare. Leftovers? Pick Brush, paint them, and remove again.`);
+      setStatus(`${aiFallback ? aiFallback + " " : ""}Removed in ${((performance.now() - t0) / 1000).toFixed(1)} s. Drag the line to compare. Leftovers? Pick Brush, paint them, and remove again.`, !!aiFallback);
     } catch (err) { undo(true); setStatus("Removal failed: " + err.message, true); }
     setBusy(false);
   };
 
-  $("fabRemove").onclick = () => $("btnRemove").click();
+  // on phones the status line sits below the canvas: bring an error (e.g. no mask yet) into view
+  $("fabRemove").onclick = () => { setStatus(""); $("btnRemove").click(); if ($("status").classList.contains("err")) $("status").scrollIntoView({ block: "center", behavior: "smooth" }); };
   $("fabRemove").addEventListener("pointerdown", (e) => e.stopPropagation());
 
   // ------------------------------------------------------------ compare
@@ -463,15 +479,22 @@
   function blobOf(canvas, type, q) { return new Promise((r) => canvas.toBlob(r, type, q)); }
   function save(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000); }
   $("btnDownload").onclick = async () => save(await blobOf(imgC, "image/png"), `${fileName}_unmarked.png`);
-  $("btnDownloadJpg").onclick = async () => save(await blobOf(imgC, "image/jpeg", 0.95), `${fileName}_unmarked.jpg`);
+  $("btnDownloadJpg").onclick = async () => {
+    // JPEG has no transparency: put see-through areas on white instead of the black toBlob would give
+    const c = document.createElement("canvas"); c.width = W; c.height = H; const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.drawImage(imgC, 0, 0);
+    const blob = await blobOf(c, "image/jpeg", 0.95); c.width = c.height = 0; save(blob, `${fileName}_unmarked.jpg`);
+  };
   $("btnShowResult").onclick = async () => { $("saveImg").src = URL.createObjectURL(await blobOf(imgC, "image/png")); $("saveDialog").showModal(); };
   $("saveClose").onclick = () => $("saveDialog").close();
+  $("saveDialog").addEventListener("close", () => { URL.revokeObjectURL($("saveImg").src); $("saveImg").removeAttribute("src"); });
 
   // ------------------------------------------------------------ keyboard
   let spaceDown = false;
   window.addEventListener("keydown", (e) => {
-    if (e.target.matches("input:not([type=range]), select, textarea") || !$("viewBatch").hidden) return;
+    if (e.target.matches("input:not([type=range]), select, textarea") || !$("viewBatch").hidden || $("saveDialog").open) return;
     const k = e.key.toLowerCase();
+    // let Enter and Space press the focused button instead of also running a shortcut
+    if ((k === "enter" || k === " ") && e.target.closest("button, a, summary")) return;
     if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); redo(); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -495,29 +518,32 @@
   // ------------------------------------------------------------ batch
   let bFiles = [], bImages = [], bResults = [], bW = 0, bH = 0;
   $("btnBatchOpen").onclick = () => $("batchInput").click();
-  $("batchInput").onchange = async (e) => {
-    bFiles = [...e.target.files].filter((f) => f.type.startsWith("image/")); e.target.value = "";
-    bResults = []; $("btnBatchZip").disabled = true; $("batchStatsBox").hidden = true;
+  $("batchInput").onchange = (e) => { const files = [...e.target.files]; e.target.value = ""; loadBatch(files); };
+  // files dropped on the Batch tab load like "Choose images"
+  $("viewBatch").addEventListener("drop", (e) => { e.preventDefault(); const files = [...e.dataTransfer.files]; if (files.some((f) => f.type.startsWith("image/"))) loadBatch(files); });
+  async function loadBatch(files) {
+    bFiles = files.filter((f) => f.type.startsWith("image/"));
+    bResults = []; bImages = []; $("btnBatchZip").disabled = true; $("btnBatchRun").disabled = true; $("batchStatsBox").hidden = true;
     const st = $("batchStatus"); st.classList.remove("err");
     if (!bFiles.length) return;
     st.textContent = "Reading images…";
     const bmps = [];
     for (const f of bFiles) { try { bmps.push(await createImageBitmap(f, { imageOrientation: "from-image" })); } catch { st.textContent = `Could not read ${f.name}.`; st.classList.add("err"); return; } }
     bW = bmps[0].width; bH = bmps[0].height;
-    const bad = bmps.findIndex((b) => b.width !== bW || b.height !== bH);
+    const bad = bmps.findIndex((b) => b.width !== bW || b.height !== bH), sizes = bmps.map((b) => [b.width, b.height]);
     $("batchGrid").innerHTML = ""; $("batchEmpty").hidden = true; bImages = [];
     bmps.forEach((b, i) => {
       const c = document.createElement("canvas"); c.width = b.width; c.height = b.height; const cx = c.getContext("2d", { willReadFrequently: true }); cx.drawImage(b, 0, 0);
-      bImages.push(cx.getImageData(0, 0, c.width, c.height).data);
+      bImages.push(cx.getImageData(0, 0, c.width, c.height).data); b.close();
       const tile = document.createElement("div"); tile.className = "tile";
       const meta = document.createElement("div"); meta.className = "meta";
       const name = document.createElement("span"); name.textContent = bFiles[i].name; meta.appendChild(name);
       tile.append(c, meta); $("batchGrid").appendChild(tile);
     });
-    if (bad >= 0) { st.textContent = `${bFiles[bad].name} is ${bmps[bad].width} × ${bmps[bad].height}, but the first image is ${bW} × ${bH}. All images must be the same size.`; st.classList.add("err"); $("btnBatchRun").disabled = true; return; }
+    if (bad >= 0) { st.textContent = `${bFiles[bad].name} is ${sizes[bad][0]} × ${sizes[bad][1]}, but the first image is ${bW} × ${bH}. All images must be the same size.`; st.classList.add("err"); $("btnBatchRun").disabled = true; return; }
     if (bFiles.length < 3) { st.textContent = "Choose at least 3 images. The shared mark is found by comparing them."; st.classList.add("err"); $("btnBatchRun").disabled = true; return; }
     st.textContent = `${bFiles.length} images, ${bW} × ${bH}. Ready.`; $("btnBatchRun").disabled = false;
-  };
+  }
   $("btnBatchRun").onclick = async () => {
     const st = $("batchStatus"); st.classList.remove("err"); $("btnBatchRun").disabled = true;
     const t0 = performance.now();
@@ -563,13 +589,16 @@
   const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
   const crc32 = (d) => { let c = 0xffffffff; for (let i = 0; i < d.length; i++) c = CRC[(c ^ d[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
   function zipStore(files) {
-    const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+    const enc = new TextEncoder(), parts = [], central = [], used = new Set(); let off = 0;
     for (const f of files) {
-      const name = enc.encode(f.name), crc = crc32(f.data), h = new DataView(new ArrayBuffer(30));
-      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint32(14, crc, true); h.setUint32(18, f.data.length, true); h.setUint32(22, f.data.length, true); h.setUint16(26, name.length, true);
+      // two inputs like a.jpg and a.png would both become a_unmarked.png and overwrite each other on extract
+      let nm = f.name; for (let i = 2; used.has(nm); i++) nm = f.name.replace(/(\.[^.]+)?$/, `-${i}$1`);
+      used.add(nm);
+      const name = enc.encode(nm), crc = crc32(f.data), h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint32(14, crc, true); h.setUint32(18, f.data.length, true); h.setUint32(22, f.data.length, true); h.setUint16(26, name.length, true);
       parts.push(new Uint8Array(h.buffer), name, f.data);
       const c = new DataView(new ArrayBuffer(46));
-      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint32(16, crc, true); c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint32(16, crc, true); c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
       central.push(new Uint8Array(c.buffer), name); off += 30 + name.length + f.data.length;
     }
     const csize = central.reduce((s, p) => s + p.length, 0), end = new DataView(new ArrayBuffer(22));
