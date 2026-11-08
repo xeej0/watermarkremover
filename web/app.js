@@ -92,7 +92,7 @@
   // a file dropped anywhere else would make the browser open it and leave the page
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => e.preventDefault());
-  window.addEventListener("paste", (e) => { const f = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith("image/")); if (f) openFile(f); });
+  window.addEventListener("paste", (e) => { const f = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith("image/")); if (f) { if (!$("viewBatch").hidden) showTab(false); openFile(f); } }); // a paste on the Batch tab opens in the single editor, so show it
 
   // Procedural sample: a landscape with fine texture and a stock-style preview mark.
   function makeSample() {
@@ -257,10 +257,11 @@
   function undo(silent) { const s = undoStack.pop(); if (!s) return; restore(s, redoStack); if (silent) redoStack.pop(); syncButtons(); }
   function redo() { const s = redoStack.pop(); if (!s) return; restore(s, undoStack); syncButtons(); }
   $("btnUndo").onclick = () => undo(); $("btnRedo").onclick = redo;
-  $("btnClear").onclick = () => { pushUndo(false); mctx.clearRect(0, 0, W, H); syncButtons(); };
+  function maskIsEmpty() { const d = mctx.getImageData(0, 0, W, H).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return false; return true; }
+  $("btnClear").onclick = () => { if (!W || maskIsEmpty()) return; pushUndo(false); mctx.clearRect(0, 0, W, H); syncButtons(); }; // no undo step for an already empty mask
   function syncButtons() {
     $("btnUndo").disabled = !undoStack.length; $("btnRedo").disabled = !redoStack.length;
-    $("btnRevert").disabled = !hasResult && !undoStack.some((s) => s.image);
+    $("btnRevert").disabled = !hasResult; // hasResult is false exactly when the image is the one opened
     for (const id of ["btnCompare", "btnDownload", "btnDownloadJpg"]) $(id).disabled = !hasResult;
     $("btnShowResult").hidden = !hasResult;
   }
@@ -310,7 +311,7 @@
   $("btnDetect").onclick = () => detect(null);
 
   // ------------------------------------------------------------ AI model (LaMa)
-  let lama = null, lamaLoading = null;
+  let lama = null, lamaLoading = null, aiFallback = ""; // aiFallback: why the last removal could not use AI
   function aiState(state, text) { const c = $("aiChip"); c.dataset.state = state; c.textContent = text; }
   async function fetchModel(onProgress) {
     let cache = null;
@@ -319,7 +320,7 @@
     if (!res.ok) throw new Error(`model download failed (HTTP ${res.status})`);
     const total = +res.headers.get("content-length") || 208e6, reader = res.body.getReader(), chunks = [];
     let got = 0;
-    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got / total, got); }
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got / total, got, total); }
     const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
     if (cache) { try { await cache.put(MODEL_URL, new Response(buf, { headers: { "content-type": "application/octet-stream" } })); } catch { /* quota: fine */ } }
     return buf;
@@ -328,11 +329,15 @@
     const ort = window.ort;
     ort.env.wasm.wasmPaths = ORT_WASM;
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
+    // run ORT in its own worker so session start-up and inference never freeze the page
+    ort.env.wasm.proxy = typeof Worker !== "undefined";
     const tries = navigator.gpu ? [["webgpu"], ["wasm"]] : [["wasm"]];
     let last;
     for (const eps of tries) {
       try {
-        const s = await ort.InferenceSession.create(bytes, { executionProviders: eps, graphOptimizationLevel: "all" });
+        // the proxy transfers (detaches) the model buffer, so keep a copy while another try may follow
+        const model = eps === tries[tries.length - 1] ? bytes : bytes.slice();
+        const s = await ort.InferenceSession.create(model, { executionProviders: eps, graphOptimizationLevel: "all" });
         // smoke test so a GPU that cannot run an op falls back now, not mid-edit
         await runLama(s, new Float32Array(3 * LAMA_SIZE * LAMA_SIZE), new Float32Array(LAMA_SIZE * LAMA_SIZE));
         return { session: s, ep: eps[0] };
@@ -348,7 +353,7 @@
       const bar = $("aiBar"), fill = bar.firstElementChild; bar.hidden = false; $("btnLoadAI").disabled = true;
       try {
         aiState("busy", fromFile ? "Reading model file" : "Downloading model");
-        const bytes = fromFile ? new Uint8Array(await fromFile.arrayBuffer()) : await fetchModel((p, got) => { fill.style.width = Math.round(p * 100) + "%"; aiState("busy", `Downloading ${(got / 1e6).toFixed(0)} / 208 MB`); });
+        const bytes = fromFile ? new Uint8Array(await fromFile.arrayBuffer()) : await fetchModel((p, got, total) => { fill.style.width = Math.round(Math.min(1, p) * 100) + "%"; aiState("busy", `Downloading ${(got / 1e6).toFixed(0)} / ${(Math.max(total, got) / 1e6).toFixed(0)} MB`); });
         fill.style.width = "100%"; aiState("busy", "Starting AI engine");
         const { session, ep } = await createSession(bytes);
         lama = session;
@@ -414,7 +419,7 @@
   async function inpaint(data, mask, w = W, h = H) {
     if (wantAI()) {
       try { await loadLama(); return await inpaintAI(data, mask, w, h); }
-      catch (e) { if ($("engine").value === "ai") setStatus(`AI engine failed (${e.message}). Used PatchMatch instead.`, true); }
+      catch (e) { if ($("engine").value === "ai") setStatus(aiFallback = `AI engine failed (${e.message}). Used PatchMatch instead.`, true); }
     }
     const res = await rpc("inpaint", { data, w, h, mask }, [data.buffer], veilProgress);
     return res.data;
@@ -426,7 +431,7 @@
     const mask = readMask();
     if (!mask) { setStatus("Mark the watermark first: paint it, drag a box around it, or press Auto-detect.", true); return; }
     setBusy(true, wantAI() ? "Removing with AI" : "Removing with PatchMatch");
-    const t0 = performance.now();
+    const t0 = performance.now(); aiFallback = "";
     try {
       pushUndo(true);
       const before = ictx.getImageData(0, 0, W, H);
@@ -434,12 +439,13 @@
       const out = await inpaint(before.data.slice(), mask);
       ictx.putImageData(new ImageData(new Uint8ClampedArray(out.buffer || out), W, H), 0, 0);
       mctx.clearRect(0, 0, W, H); hasResult = true; syncButtons(); setCompare(true);
-      setStatus(`Removed in ${((performance.now() - t0) / 1000).toFixed(1)} s. Drag the line to compare. Leftovers? Pick Brush, paint them, and remove again.`);
+      setStatus(`${aiFallback ? aiFallback + " " : ""}Removed in ${((performance.now() - t0) / 1000).toFixed(1)} s. Drag the line to compare. Leftovers? Pick Brush, paint them, and remove again.`, !!aiFallback);
     } catch (err) { undo(true); setStatus("Removal failed: " + err.message, true); }
     setBusy(false);
   };
 
-  $("fabRemove").onclick = () => $("btnRemove").click();
+  // on phones the status line sits below the canvas: bring an error (e.g. no mask yet) into view
+  $("fabRemove").onclick = () => { setStatus(""); $("btnRemove").click(); if ($("status").classList.contains("err")) $("status").scrollIntoView({ block: "center", behavior: "smooth" }); };
   $("fabRemove").addEventListener("pointerdown", (e) => e.stopPropagation());
 
   // ------------------------------------------------------------ compare
@@ -473,7 +479,11 @@
   function blobOf(canvas, type, q) { return new Promise((r) => canvas.toBlob(r, type, q)); }
   function save(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000); }
   $("btnDownload").onclick = async () => save(await blobOf(imgC, "image/png"), `${fileName}_unmarked.png`);
-  $("btnDownloadJpg").onclick = async () => save(await blobOf(imgC, "image/jpeg", 0.95), `${fileName}_unmarked.jpg`);
+  $("btnDownloadJpg").onclick = async () => {
+    // JPEG has no transparency: put see-through areas on white instead of the black toBlob would give
+    const c = document.createElement("canvas"); c.width = W; c.height = H; const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.drawImage(imgC, 0, 0);
+    const blob = await blobOf(c, "image/jpeg", 0.95); c.width = c.height = 0; save(blob, `${fileName}_unmarked.jpg`);
+  };
   $("btnShowResult").onclick = async () => { $("saveImg").src = URL.createObjectURL(await blobOf(imgC, "image/png")); $("saveDialog").showModal(); };
   $("saveClose").onclick = () => $("saveDialog").close();
   $("saveDialog").addEventListener("close", () => { URL.revokeObjectURL($("saveImg").src); $("saveImg").removeAttribute("src"); });
@@ -508,8 +518,11 @@
   // ------------------------------------------------------------ batch
   let bFiles = [], bImages = [], bResults = [], bW = 0, bH = 0;
   $("btnBatchOpen").onclick = () => $("batchInput").click();
-  $("batchInput").onchange = async (e) => {
-    bFiles = [...e.target.files].filter((f) => f.type.startsWith("image/")); e.target.value = "";
+  $("batchInput").onchange = (e) => { const files = [...e.target.files]; e.target.value = ""; loadBatch(files); };
+  // files dropped on the Batch tab load like "Choose images"
+  $("viewBatch").addEventListener("drop", (e) => { e.preventDefault(); const files = [...e.dataTransfer.files]; if (files.some((f) => f.type.startsWith("image/"))) loadBatch(files); });
+  async function loadBatch(files) {
+    bFiles = files.filter((f) => f.type.startsWith("image/"));
     bResults = []; bImages = []; $("btnBatchZip").disabled = true; $("btnBatchRun").disabled = true; $("batchStatsBox").hidden = true;
     const st = $("batchStatus"); st.classList.remove("err");
     if (!bFiles.length) return;
@@ -530,7 +543,7 @@
     if (bad >= 0) { st.textContent = `${bFiles[bad].name} is ${sizes[bad][0]} × ${sizes[bad][1]}, but the first image is ${bW} × ${bH}. All images must be the same size.`; st.classList.add("err"); $("btnBatchRun").disabled = true; return; }
     if (bFiles.length < 3) { st.textContent = "Choose at least 3 images. The shared mark is found by comparing them."; st.classList.add("err"); $("btnBatchRun").disabled = true; return; }
     st.textContent = `${bFiles.length} images, ${bW} × ${bH}. Ready.`; $("btnBatchRun").disabled = false;
-  };
+  }
   $("btnBatchRun").onclick = async () => {
     const st = $("batchStatus"); st.classList.remove("err"); $("btnBatchRun").disabled = true;
     const t0 = performance.now();
